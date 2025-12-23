@@ -7,7 +7,7 @@ To install, get the latest appropriate version
 from [Releases](https://github.com/krazybluemonkey/infmod-alphapatch/releases)
 and see the [common guide](https://github.com/kasamikona/infdev-mods)
 
-This was made with the intention of preserving void-acesss monoliths. Inspired losely by [Kasami's zone patch](https://github.com/kasamikona/infmod-zonepatch/releases)
+This was made with the intention of preserving void-accesss monoliths. Inspired losely by [Kasami's zone patch](https://github.com/kasamikona/infmod-zonepatch/releases)
 
 ## References & Links
 - https://github.com/MCPHackers/RetroMCP-Java
