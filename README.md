@@ -2,7 +2,6 @@
 A jar mod for infdev 20100624 that forward ports 20100618's use of the alpha level format.
 
 This will **not load zone format worlds.**
-It also does **not** add any compression so world files will still be relatively huge.
 
 To install, get the latest appropriate version
 from [Releases](https://github.com/krazybluemonkey/infmod-alphapatch/releases)
