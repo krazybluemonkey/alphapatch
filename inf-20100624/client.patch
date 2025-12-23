@@ -1,0 +1,1478 @@
+--- net/minecraft/isom/WorldIso.java
++++ net/minecraft/isom/WorldIso.java
+@@ -4,9 +4,6 @@
+ import net.minecraft.game.world.World;
+ import net.minecraft.game.world.chunk.ChunkProviderIso;
+ import net.minecraft.game.world.chunk.IChunkProvider;
+-import net.minecraft.game.world.chunk.loader.ChunkLoader;
+-import net.minecraft.game.world.chunk.loader.IsomChunkLoader;
+-import net.minecraft.game.world.chunk.loader.IsomChunkProvider;
+ 
+ final class WorldIso extends World {
+ 	WorldIso(CanvasIsomPreview var1, File var2, String var3) {
+@@ -14,6 +11,6 @@
+ 	}
+ 
+ 	protected final IChunkProvider getChunkProvider(File var1) {
+-		return new ChunkProviderIso(this, new IsomChunkLoader(new IsomChunkProvider(var1), new ChunkLoader(var1, false)));
++		return new ChunkProviderIso(this, var1);
+ 	}
+ }
+--- net/minecraft/game/world/chunk/ChunkProviderLoadOrGenerate.java
++++ net/minecraft/game/world/chunk/ChunkProviderLoadOrGenerate.java
+@@ -1,133 +1,121 @@
+ package net.minecraft.game.world.chunk;
+ 
+-import java.io.IOException;
++import com.mojang.nbt.NBTTagCompound;
++import java.io.File;
++import java.io.FileInputStream;
++import java.io.FileOutputStream;
++import java.util.ArrayList;
++import java.util.List;
++import net.minecraft.client.LoadingScreenRenderer;
+ import net.minecraft.game.world.World;
+-import net.minecraft.game.world.block.BlockSand;
+-import net.minecraft.game.world.chunk.loader.IChunkLoader;
+-import util.IProgressUpdate;
+ 
+ public final class ChunkProviderLoadOrGenerate implements IChunkProvider {
+-	private Chunk blankChunk;
+-	private IChunkProvider chunkProvider;
+-	private IChunkLoader chunkLoader;
+-	private Chunk[] chunkMap = new Chunk[1024];
+-	private World world;
+-	private int chunkXPos = -999999999;
+-	private int chunkZPos = -999999999;
+ 	private Chunk currentChunk;
++	private IChunkProvider chunkProvider;
++	private Chunk[] chunks = new Chunk[1024];
++	private File saveDirectory;
++	private World worldObj;
++	private List emptyList = new ArrayList();
+ 
+-	public ChunkProviderLoadOrGenerate(World var1, IChunkLoader var2, IChunkProvider var3) {
+-		this.blankChunk = new Chunk(var1, new byte[-Short.MIN_VALUE], 0, 0);
+-		this.blankChunk.isChunkRendered = true;
+-		this.blankChunk.neverSave = true;
+-		this.world = var1;
+-		this.chunkLoader = var2;
++	public ChunkProviderLoadOrGenerate(World var1, File var2, IChunkProvider var3) {
++		this.currentChunk = new Chunk(var1, new byte[-Short.MIN_VALUE], 0, 0);
++		this.currentChunk.isChunkRendered = true;
++		this.currentChunk.neverSave = true;
++		this.worldObj = var1;
+ 		this.chunkProvider = var3;
++		this.saveDirectory = var2;
+ 	}
+ 
+ 	public final boolean chunkExists(int var1, int var2) {
+-		if(var1 == this.chunkXPos && var2 == this.chunkZPos && this.currentChunk != null) {
+-			return true;
+-		} else {
+-			int var3 = var1 & 31;
+-			int var4 = var2 & 31;
+-			var3 += var4 << 5;
+-			return this.chunkMap[var3] != null && (this.chunkMap[var3] == this.blankChunk || this.chunkMap[var3].isAtLocation(var1, var2));
+-		}
++		int var3 = var1 & 31 | (var2 & 31) << 5;
++		return this.chunks[var3] != null && (this.chunks[var3] == this.currentChunk || this.chunks[var3].isAtLocation(var1, var2));
+ 	}
+ 
+ 	public final Chunk provideChunk(int var1, int var2) {
+-		if(var1 == this.chunkXPos && var2 == this.chunkZPos && this.currentChunk != null) {
+-			return this.currentChunk;
+-		} else {
+-			int var3 = var1 & 31;
+-			int var4 = var2 & 31;
+-			var3 += var4 << 5;
+-			if(!this.chunkExists(var1, var2)) {
+-				BlockSand.fallInstantly = true;
+-				int var5;
+-				Chunk var6;
+-				if(this.chunkMap[var3] != null) {
+-					var6 = this.chunkMap[var3];
+-					var6.isChunkLoaded = false;
+-					var6.worldObj.loadedTileEntityList.removeAll(var6.chunkTileEntityMap.values());
+-
+-					for(var5 = 0; var5 < var6.entities.length; ++var5) {
+-						var6.worldObj.unloadEntities(var6.entities[var5]);
+-					}
+-
+-					this.saveChunk(this.chunkMap[var3]);
+-					this.saveChunkMap(this.chunkMap[var3]);
+-				}
+-
+-				var6 = this.loadChunkAtPos(var1, var2);
+-				if(var6 == null) {
+-					if(this.chunkProvider == null) {
+-						var6 = this.blankChunk;
+-					} else {
+-						var6 = this.chunkProvider.provideChunk(var1, var2);
+-					}
+-				}
+-
+-				this.chunkMap[var3] = var6;
+-				if(this.chunkMap[var3] != null) {
+-					var6 = this.chunkMap[var3];
+-					var6.isChunkLoaded = true;
+-					var6.worldObj.loadedTileEntityList.addAll(var6.chunkTileEntityMap.values());
+-
+-					for(var5 = 0; var5 < var6.entities.length; ++var5) {
+-						var6.worldObj.addLoadedEntities(var6.entities[var5]);
+-					}
+-				}
+-
+-				if(!this.chunkMap[var3].isTerrainPopulated && this.chunkExists(var1 + 1, var2 + 1) && this.chunkExists(var1, var2 + 1) && this.chunkExists(var1 + 1, var2)) {
+-					this.populate(this, var1, var2);
+-				}
+-
+-				if(this.chunkExists(var1 - 1, var2) && !this.provideChunk(var1 - 1, var2).isTerrainPopulated && this.chunkExists(var1 - 1, var2 + 1) && this.chunkExists(var1, var2 + 1) && this.chunkExists(var1 - 1, var2)) {
+-					this.populate(this, var1 - 1, var2);
+-				}
+-
+-				if(this.chunkExists(var1, var2 - 1) && !this.provideChunk(var1, var2 - 1).isTerrainPopulated && this.chunkExists(var1 + 1, var2 - 1) && this.chunkExists(var1, var2 - 1) && this.chunkExists(var1 + 1, var2)) {
+-					this.populate(this, var1, var2 - 1);
+-				}
+-
+-				if(this.chunkExists(var1 - 1, var2 - 1) && !this.provideChunk(var1 - 1, var2 - 1).isTerrainPopulated && this.chunkExists(var1 - 1, var2 - 1) && this.chunkExists(var1, var2 - 1) && this.chunkExists(var1 - 1, var2)) {
+-					this.populate(this, var1 - 1, var2 - 1);
+-				}
+-
+-				BlockSand.fallInstantly = false;
+-			}
+-
+-			this.chunkXPos = var1;
+-			this.chunkZPos = var2;
+-			this.currentChunk = this.chunkMap[var3];
+-			return this.chunkMap[var3];
+-		}
+-	}
+-
+-	private Chunk loadChunkAtPos(int var1, int var2) {
+-		try {
+-			return this.chunkLoader.loadChunk(this.world, var1, var2);
+-		} catch (Exception var3) {
+-			var3.printStackTrace();
+-			return null;
+-		}
+-	}
+-
+-	private void saveChunkMap(Chunk var1) {
+-		try {
+-			this.chunkLoader.saveExtraChunkData(this.world, var1);
+-		} catch (Exception var2) {
+-			var2.printStackTrace();
+-		}
++		int var3 = var1 & 31 | (var2 & 31) << 5;
++		if(!this.chunkExists(var1, var2)) {
++			if(this.chunks[var3] != null) {
++				this.chunks[var3].unloadTileEntities();
++				this.saveChunk(this.chunks[var3]);
++			}
++
++			Chunk var4 = this.loadChunk(var1, var2);
++			if(var4 == null) {
++				if(this.chunkProvider == null) {
++					var4 = this.currentChunk;
++				} else {
++					var4 = this.chunkProvider.provideChunk(var1, var2);
++				}
++			}
++
++			this.chunks[var3] = var4;
++			if(this.chunks[var3] != null) {
++				this.chunks[var3].loadTileEntities();
++			}
++
++			if(!this.chunks[var3].isTerrainPopulated && this.chunkExists(var1 + 1, var2 + 1) && this.chunkExists(var1, var2 + 1) && this.chunkExists(var1 + 1, var2)) {
++				this.populate(this, var1, var2);
++			}
++
++			if(this.chunkExists(var1 - 1, var2) && !this.provideChunk(var1 - 1, var2).isTerrainPopulated && this.chunkExists(var1 - 1, var2 + 1) && this.chunkExists(var1, var2 + 1) && this.chunkExists(var1 - 1, var2)) {
++				this.populate(this, var1 - 1, var2);
++			}
++
++			if(this.chunkExists(var1, var2 - 1) && !this.provideChunk(var1, var2 - 1).isTerrainPopulated && this.chunkExists(var1 + 1, var2 - 1) && this.chunkExists(var1, var2 - 1) && this.chunkExists(var1 + 1, var2)) {
++				this.populate(this, var1, var2 - 1);
++			}
++
++			if(this.chunkExists(var1 - 1, var2 - 1) && !this.provideChunk(var1 - 1, var2 - 1).isTerrainPopulated && this.chunkExists(var1 - 1, var2 - 1) && this.chunkExists(var1, var2 - 1) && this.chunkExists(var1 - 1, var2)) {
++				this.populate(this, var1 - 1, var2 - 1);
++			}
++		}
++
++		return this.chunks[var3];
++	}
++
++	private File chunkFileForXZ(int var1, int var2) {
++		String var3 = "c." + Integer.toString(var1, 36) + "." + Integer.toString(var2, 36) + ".dat";
++		String var4 = Integer.toString(var1 & 63, 36);
++		String var6 = Integer.toString(var2 & 63, 36);
++		File var5 = new File(this.saveDirectory, var4);
++		var5.mkdirs();
++		var5 = new File(var5, var6);
++		var5.mkdirs();
++		var5 = new File(var5, var3);
++		return var5;
++	}
++
++	private Chunk loadChunk(int var1, int var2) {
++		File var4 = this.chunkFileForXZ(var1, var2);
++		if(var4.exists()) {
++			try {
++				FileInputStream var5 = new FileInputStream(var4);
++				NBTTagCompound var6 = LoadingScreenRenderer.read(var5);
++				return Chunk.readChunkNBTData(this.worldObj, var6.getCompoundTag("Level"));
++			} catch (Exception var3) {
++				var3.printStackTrace();
++			}
++		}
++
++		return null;
+ 	}
+ 
+ 	private void saveChunk(Chunk var1) {
++		File var2 = this.chunkFileForXZ(var1.xPosition, var1.zPosition);
++		if(var2.exists()) {
++			this.worldObj.sizeOnDisk -= var2.length();
++		}
++
+ 		try {
+-			this.chunkLoader.saveChunk(this.world, var1);
+-		} catch (IOException var2) {
+-			var2.printStackTrace();
++			FileOutputStream var3 = new FileOutputStream(var2);
++			NBTTagCompound var4 = new NBTTagCompound();
++			NBTTagCompound var5 = new NBTTagCompound();
++			var4.setTag("Level", var5);
++			var1.writeChunkNBTData(var5);
++			LoadingScreenRenderer.write(var4, var3);
++			this.worldObj.sizeOnDisk += var2.length();
++		} catch (Exception var6) {
++			var6.printStackTrace();
+ 		}
+ 	}
+ 
+@@ -137,60 +125,59 @@
+ 			var4.isTerrainPopulated = true;
+ 			if(this.chunkProvider != null) {
+ 				this.chunkProvider.populate(var1, var2, var3);
+-				var4.isModified = true;
+ 			}
+ 		}
+ 
+ 	}
+ 
+-	public final boolean saveChunks(boolean var1, IProgressUpdate var2) {
+-		int var3 = 0;
+-		int var4 = 0;
+-		int var5;
+-		if(var2 != null) {
+-			for(var5 = 0; var5 < this.chunkMap.length; ++var5) {
+-				if(this.chunkMap[var5] != null && this.chunkMap[var5].needsSaving()) {
+-					++var4;
+-				}
+-			}
+-		}
+-
+-		var5 = 0;
+-
+-		for(int var6 = 0; var6 < this.chunkMap.length; ++var6) {
+-			if(this.chunkMap[var6] != null) {
+-				if(var1 && !this.chunkMap[var6].neverSave) {
+-					this.saveChunkMap(this.chunkMap[var6]);
+-				}
+-
+-				if(this.chunkMap[var6].needsSaving()) {
+-					this.saveChunk(this.chunkMap[var6]);
+-					this.chunkMap[var6].isModified = false;
+-					++var3;
+-					if(var3 == 2 && !var1) {
+-						return false;
+-					}
+-
+-					if(var2 != null) {
+-						++var5;
+-						if(var5 % 10 == 0) {
+-							var2.setLoadingProgress(var5 * 100 / var4);
+-						}
+-					}
+-				}
+-			}
+-		}
+-
+-		if(var1) {
+-			this.chunkLoader.saveExtraData();
+-		}
+-
+-		return true;
++	public final void saveChunks(boolean var1) {
++		int var2 = 0;
++
++		for(int var3 = 0; var3 < this.chunks.length; ++var3) {
++			if(this.chunks[var3] != null && this.chunks[var3].needsSaving(var1)) {
++				this.saveChunk(this.chunks[var3]);
++				this.chunks[var3].isModified = false;
++				++var2;
++				if(var2 == 2 && !var1) {
++					return;
++				}
++			}
++		}
++
+ 	}
+ 
+ 	public final boolean unload100OldestChunks() {
+-		this.chunkLoader.chunkTick();
+-		return this.chunkProvider.unload100OldestChunks();
++		this.chunkProvider.unload100OldestChunks();
++		int var1 = 0;
++
++		while(var1++ <= 0 && !this.emptyList.isEmpty()) {
++			this.emptyList.remove(0);
++			if(this.chunks[0].neverSave) {
++				Chunk var2 = this.chunkProvider.provideChunk(0, 0);
++				this.chunks[0] = var2;
++				if(this.chunks[0] != null) {
++					this.chunks[0].loadTileEntities();
++				}
++
++				if(!this.chunks[0].isTerrainPopulated && this.chunkExists(1, 1) && this.chunkExists(0, 1) && this.chunkExists(1, 0)) {
++					this.populate(this, 0, 0);
++				}
++
++				if(this.chunkExists(-1, 0) && !this.provideChunk(-1, 0).isTerrainPopulated && this.chunkExists(-1, 1) && this.chunkExists(0, 1) && this.chunkExists(-1, 0)) {
++					this.populate(this, -1, 0);
++				}
++
++				if(this.chunkExists(0, -1) && !this.provideChunk(0, -1).isTerrainPopulated && this.chunkExists(1, -1) && this.chunkExists(0, -1) && this.chunkExists(1, 0)) {
++					this.populate(this, 0, -1);
++				}
++
++				if(this.chunkExists(-1, -1) && !this.provideChunk(-1, -1).isTerrainPopulated && this.chunkExists(-1, -1) && this.chunkExists(0, -1) && this.chunkExists(-1, 0)) {
++					this.populate(this, -1, -1);
++				}
++			}
++		}
++
++		return !this.emptyList.isEmpty();
+ 	}
+ 
+ 	public final boolean canSave() {
+--- net/minecraft/game/world/chunk/IChunkProvider.java
++++ net/minecraft/game/world/chunk/IChunkProvider.java
+@@ -1,7 +1,5 @@
+ package net.minecraft.game.world.chunk;
+ 
+-import util.IProgressUpdate;
+-
+ public interface IChunkProvider {
+ 	boolean chunkExists(int var1, int var2);
+ 
+@@ -9,7 +7,7 @@
+ 
+ 	void populate(IChunkProvider var1, int var2, int var3);
+ 
+-	boolean saveChunks(boolean var1, IProgressUpdate var2);
++	void saveChunks(boolean var1);
+ 
+ 	boolean unload100OldestChunks();
+ 
+--- net/minecraft/game/world/terrain/ChunkProviderGenerate.java
++++ net/minecraft/game/world/terrain/ChunkProviderGenerate.java
+@@ -602,8 +602,7 @@
+ 
+ 	}
+ 
+-	public final boolean saveChunks(boolean var1, IProgressUpdate var2) {
+-		return true;
++	public final void saveChunks(boolean var1) {
+ 	}
+ 
+ 	public final boolean unload100OldestChunks() {
+--- net/minecraft/game/world/chunk/Chunk.java
++++ net/minecraft/game/world/chunk/Chunk.java
+@@ -1,10 +1,14 @@
+ package net.minecraft.game.world.chunk;
+ 
++import com.mojang.nbt.NBTTagCompound;
++import com.mojang.nbt.NBTTagList;
+ import java.util.ArrayList;
+ import java.util.HashMap;
++import java.util.Iterator;
+ import java.util.List;
+ import java.util.Map;
+ import net.minecraft.game.entity.Entity;
++import net.minecraft.game.entity.EntityList;
+ import net.minecraft.game.physics.AxisAlignedBB;
+ import net.minecraft.game.world.EnumSkyBlock;
+ import net.minecraft.game.world.World;
+@@ -15,28 +19,30 @@
+ 
+ public final class Chunk {
+ 	public static boolean isLit;
+-	public byte[] blocks;
+-	public boolean isChunkLoaded;
+-	public World worldObj;
+-	public NibbleArray data;
+-	public NibbleArray skylightMap;
+-	public NibbleArray blocklightMap;
+-	public byte[] heightMap;
+-	private int q;
++	private byte[] blocks;
++	private boolean hasTileEntities;
++	private World worldObj;
++	private NibbleArray data;
++	private NibbleArray skyLightMap;
++	private NibbleArray blockLightMap;
++	private byte[] heightMap;
++	private int height;
+ 	public final int xPosition;
+ 	public final int zPosition;
+-	public Map chunkTileEntityMap;
+-	public List[] entities;
++	private Map chunkTileEntityMap;
++	private List[] entities;
+ 	public boolean isTerrainPopulated;
+ 	public boolean isModified;
++	private boolean hasEntities;
+ 	public boolean neverSave;
+ 	public boolean isChunkRendered;
+ 
+-	public Chunk(World var1, int var2, int var3) {
++	private Chunk(World var1, int var2, int var3) {
+ 		this.chunkTileEntityMap = new HashMap();
+ 		this.entities = new List[8];
+ 		this.isTerrainPopulated = false;
+ 		this.isModified = false;
++		this.hasEntities = false;
+ 		this.isChunkRendered = false;
+ 		this.worldObj = var1;
+ 		this.xPosition = var2;
+@@ -53,8 +59,8 @@
+ 		this(var1, var3, var4);
+ 		this.blocks = var2;
+ 		this.data = new NibbleArray(var2.length);
+-		this.skylightMap = new NibbleArray(var2.length);
+-		this.blocklightMap = new NibbleArray(var2.length);
++		this.skyLightMap = new NibbleArray(var2.length);
++		this.blockLightMap = new NibbleArray(var2.length);
+ 	}
+ 
+ 	public final boolean isAtLocation(int var1, int var2) {
+@@ -80,7 +86,7 @@
+ 			}
+ 		}
+ 
+-		this.q = var1;
++		this.height = var1;
+ 
+ 		for(var2 = 0; var2 < 16; ++var2) {
+ 			for(var3 = 0; var3 < 16; ++var3) {
+@@ -128,8 +134,8 @@
+ 			this.heightMap[var3 << 4 | var1] = (byte)var5;
+ 			int var6;
+ 			int var7;
+-			if(var5 < this.q) {
+-				this.q = var5;
++			if(var5 < this.height) {
++				this.height = var5;
+ 			} else {
+ 				var2 = 127;
+ 
+@@ -141,26 +147,26 @@
+ 					}
+ 				}
+ 
+-				this.q = var2;
++				this.height = var2;
+ 			}
+ 
+ 			var2 = (this.xPosition << 4) + var1;
+ 			var6 = (this.zPosition << 4) + var3;
+ 			if(var5 < var4) {
+ 				for(var7 = var5; var7 < var4; ++var7) {
+-					this.skylightMap.setNibble(var1, var7, var3, 15);
++					this.skyLightMap.setNibble(var1, var7, var3, 15);
+ 				}
+ 			} else {
+ 				this.worldObj.scheduleLightingUpdate(EnumSkyBlock.Sky, var2, var4, var6, var2, var5, var6);
+ 
+ 				for(var7 = var4; var7 < var5; ++var7) {
+-					this.skylightMap.setNibble(var1, var7, var3, 0);
++					this.skyLightMap.setNibble(var1, var7, var3, 0);
+ 				}
+ 			}
+ 
+ 			var7 = 15;
+ 
+-			for(var4 = var5; var5 > 0 && var7 > 0; this.skylightMap.setNibble(var1, var5, var3, var7)) {
++			for(var4 = var5; var5 > 0 && var7 > 0; this.skyLightMap.setNibble(var1, var5, var3, var7)) {
+ 				--var5;
+ 				int var8 = Block.lightOpacity[this.getBlockID(var1, var5, var3)];
+ 				if(var8 == 0) {
+@@ -192,18 +198,18 @@
+ 	public final boolean setBlockIDWithMetadata(int var1, int var2, int var3, int var4, int var5) {
+ 		byte var6 = (byte)var4;
+ 		int var7 = this.heightMap[var3 << 4 | var1] & 255;
+-		int var8 = this.blocks[var1 << 11 | var3 << 7 | var2] & 255;
+-		if(var8 == var4) {
++		this.data.setNibble(var1, var2, var3, var5);
++		var5 = this.blocks[var1 << 11 | var3 << 7 | var2] & 255;
++		if(var5 == var4) {
+ 			return false;
+ 		} else {
+-			int var9 = (this.xPosition << 4) + var1;
+-			int var10 = (this.zPosition << 4) + var3;
++			int var8 = (this.xPosition << 4) + var1;
++			int var9 = (this.zPosition << 4) + var3;
++			if(var5 != 0) {
++				Block.blocksList[var5].onBlockRemoval(this.worldObj, var8, var2, var9);
++			}
++
+ 			this.blocks[var1 << 11 | var3 << 7 | var2] = var6;
+-			if(var8 != 0) {
+-				Block.blocksList[var8].onBlockRemoval(this.worldObj, var9, var2, var10);
+-			}
+-
+-			this.data.setNibble(var1, var2, var3, var5);
+ 			if(Block.lightOpacity[var6] != 0) {
+ 				if(var2 >= var7) {
+ 					this.relightBlock(var1, var2 + 1, var3);
+@@ -212,11 +218,11 @@
+ 				this.relightBlock(var1, var2, var3);
+ 			}
+ 
+-			this.worldObj.scheduleLightingUpdate(EnumSkyBlock.Sky, var9, var2, var10, var9, var2, var10);
+-			this.worldObj.scheduleLightingUpdate(EnumSkyBlock.Block, var9, var2, var10, var9, var2, var10);
++			this.worldObj.scheduleLightingUpdate(EnumSkyBlock.Sky, var8, var2, var9, var8, var2, var9);
++			this.worldObj.scheduleLightingUpdate(EnumSkyBlock.Block, var8, var2, var9, var8, var2, var9);
+ 			this.updateSkylight_do(var1, var3);
+ 			if(var4 != 0) {
+-				Block.blocksList[var4].onBlockAdded(this.worldObj, var9, var2, var10);
++				Block.blocksList[var4].onBlockAdded(this.worldObj, var8, var2, var9);
+ 			}
+ 
+ 			this.isModified = true;
+@@ -263,14 +269,32 @@
+ 		return this.data.getNibble(var1, var2, var3);
+ 	}
+ 
++	public final void setBlockMetadata(int var1, int var2, int var3, int var4) {
++		this.isModified = true;
++		this.data.setNibble(var1, var2, var3, var4);
++	}
++
++	public final int getSavedLightValue(EnumSkyBlock var1, int var2, int var3, int var4) {
++		return var1 == EnumSkyBlock.Sky ? this.skyLightMap.getNibble(var2, var3, var4) : (var1 == EnumSkyBlock.Block ? this.blockLightMap.getNibble(var2, var3, var4) : 0);
++	}
++
++	public final void setLightValue(EnumSkyBlock var1, int var2, int var3, int var4, int var5) {
++		this.isModified = true;
++		if(var1 == EnumSkyBlock.Sky) {
++			this.skyLightMap.setNibble(var2, var3, var4, var5);
++		} else if(var1 == EnumSkyBlock.Block) {
++			this.blockLightMap.setNibble(var2, var3, var4, var5);
++		}
++	}
++
+ 	public final int getBlockLightValue(int var1, int var2, int var3, int var4) {
+-		int var5 = this.skylightMap.getNibble(var1, var2, var3);
++		int var5 = this.skyLightMap.getNibble(var1, var2, var3);
+ 		if(var5 > 0) {
+ 			isLit = true;
+ 		}
+ 
+ 		var5 -= var4;
+-		var1 = this.blocklightMap.getNibble(var1, var2, var3);
++		var1 = this.blockLightMap.getNibble(var1, var2, var3);
+ 		if(var1 > var5) {
+ 			var5 = var1;
+ 		}
+@@ -278,6 +302,102 @@
+ 		return var5;
+ 	}
+ 
++	public final void writeChunkNBTData(NBTTagCompound var1) {
++		var1.setInteger("xPos", this.xPosition);
++		var1.setInteger("zPos", this.zPosition);
++		var1.setLong("LastUpdate", this.worldObj.worldTime);
++		var1.setByteArray("Blocks", this.blocks);
++		var1.setByteArray("Data", this.data.data);
++		var1.setByteArray("SkyLight", this.skyLightMap.data);
++		var1.setByteArray("BlockLight", this.blockLightMap.data);
++		var1.setByteArray("HeightMap", this.heightMap);
++		var1.setBoolean("TerrainPopulated", this.isTerrainPopulated);
++		this.hasEntities = false;
++		NBTTagList var2 = new NBTTagList();
++
++		Iterator var4;
++		NBTTagCompound var6;
++		for(int var3 = 0; var3 < this.entities.length; ++var3) {
++			var4 = this.entities[var3].iterator();
++
++			while(var4.hasNext()) {
++				Entity var5 = (Entity)var4.next();
++				var6 = new NBTTagCompound();
++				if(var5.addEntityID(var6)) {
++					var2.setTag(var6);
++					this.hasEntities = true;
++				}
++			}
++		}
++
++		var1.setTag("Entities", var2);
++		NBTTagList var7 = new NBTTagList();
++		var4 = this.chunkTileEntityMap.values().iterator();
++
++		while(var4.hasNext()) {
++			TileEntity var8 = (TileEntity)var4.next();
++			var6 = new NBTTagCompound();
++			var8.writeToNBT(var6);
++			var7.setTag(var6);
++		}
++
++		var1.setTag("TileEntities", var7);
++	}
++
++	public static Chunk readChunkNBTData(World var0, NBTTagCompound var1) {
++		int var2 = var1.getInteger("xPos");
++		int var3 = var1.getInteger("zPos");
++		Chunk var9 = new Chunk(var0, var2, var3);
++		var9.blocks = var1.getByteArray("Blocks");
++		var9.data = new NibbleArray(var1.getByteArray("Data"));
++		var9.skyLightMap = new NibbleArray(var1.getByteArray("SkyLight"));
++		var9.blockLightMap = new NibbleArray(var1.getByteArray("BlockLight"));
++		var9.heightMap = var1.getByteArray("HeightMap");
++		var9.isTerrainPopulated = var1.getBoolean("TerrainPopulated");
++		if(!var9.data.isValid()) {
++			var9.data = new NibbleArray(var9.blocks.length);
++		}
++
++		if(var9.heightMap == null || !var9.skyLightMap.isValid()) {
++			var9.heightMap = new byte[256];
++			var9.skyLightMap = new NibbleArray(var9.blocks.length);
++			var9.generateHeightMap();
++		}
++
++		if(!var9.blockLightMap.isValid()) {
++			var9.blockLightMap = new NibbleArray(var9.blocks.length);
++		}
++
++		var9.hasEntities = false;
++		NBTTagList var10 = var1.getTagList("Entities");
++		if(var10 != null) {
++			for(int var4 = 0; var4 < var10.tagCount(); ++var4) {
++				NBTTagCompound var5 = (NBTTagCompound)var10.tagAt(var4);
++				Entity var6 = EntityList.createEntityFromNBT(var5, var0);
++				if(var6 != null) {
++					var9.hasEntities = true;
++					var9.addEntity(var6);
++				}
++			}
++		}
++
++		NBTTagList var11 = var1.getTagList("TileEntities");
++		if(var11 != null) {
++			for(int var12 = 0; var12 < var11.tagCount(); ++var12) {
++				NBTTagCompound var13 = (NBTTagCompound)var11.tagAt(var12);
++				TileEntity var8 = TileEntity.createAndLoadEntity(var13);
++				if(var8 != null) {
++					var3 = var8.xCoord - (var9.xPosition << 4);
++					int var14 = var8.yCoord;
++					int var7 = var8.zCoord - (var9.zPosition << 4);
++					var9.setChunkBlockTileEntity(var3, var14, var7, var8);
++				}
++			}
++		}
++
++		return var9;
++	}
++
+ 	public final void addEntity(Entity var1) {
+ 		int var2 = MathHelper.floor_double(var1.posX / 16.0D);
+ 		int var3 = MathHelper.floor_double(var1.posZ / 16.0D);
+@@ -295,6 +415,7 @@
+ 		}
+ 
+ 		this.entities[var2].add(var1);
++		this.isModified = true;
+ 	}
+ 
+ 	public final void removeEntityAtIndex(Entity var1, int var2) {
+@@ -311,6 +432,7 @@
+ 		}
+ 
+ 		this.entities[var2].remove(var1);
++		this.isModified = true;
+ 	}
+ 
+ 	public final boolean canBlockSeeTheSky(int var1, int var2, int var3) {
+@@ -330,21 +452,15 @@
+ 		return var5;
+ 	}
+ 
+-	public final void addTileEntity(TileEntity var1) {
+-		int var2 = var1.xCoord - (this.xPosition << 4);
+-		int var3 = var1.yCoord;
+-		int var4 = var1.zCoord - (this.zPosition << 4);
+-		this.setChunkBlockTileEntity(var2, var3, var4, var1);
+-	}
+-
+ 	public final void setChunkBlockTileEntity(int var1, int var2, int var3, TileEntity var4) {
++		this.isModified = true;
+ 		int var5 = var1 + (var2 << 10) + (var3 << 10 << 10);
+ 		var4.worldObj = this.worldObj;
+ 		var4.xCoord = (this.xPosition << 4) + var1;
+ 		var4.yCoord = var2;
+ 		var4.zCoord = (this.zPosition << 4) + var3;
+ 		if(this.getBlockID(var1, var2, var3) != 0 && Block.blocksList[this.getBlockID(var1, var2, var3)] instanceof BlockContainer) {
+-			if(this.isChunkLoaded) {
++			if(this.hasTileEntities) {
+ 				if(this.chunkTileEntityMap.get(Integer.valueOf(var5)) != null) {
+ 					this.worldObj.loadedTileEntityList.remove(this.chunkTileEntityMap.get(Integer.valueOf(var5)));
+ 				}
+@@ -358,6 +474,35 @@
+ 		}
+ 	}
+ 
++	public final void removeChunkBlockTileEntity(int var1, int var2, int var3) {
++		this.isModified = true;
++		var1 = var1 + (var2 << 10) + (var3 << 10 << 10);
++		if(this.hasTileEntities) {
++			this.worldObj.loadedTileEntityList.remove(this.chunkTileEntityMap.remove(Integer.valueOf(var1)));
++		}
++
++	}
++
++	public final void loadTileEntities() {
++		this.hasTileEntities = true;
++		this.worldObj.loadedTileEntityList.addAll(this.chunkTileEntityMap.values());
++
++		for(int var1 = 0; var1 < this.entities.length; ++var1) {
++			this.worldObj.addLoadedEntities(this.entities[var1]);
++		}
++
++	}
++
++	public final void unloadTileEntities() {
++		this.hasTileEntities = false;
++		this.worldObj.loadedTileEntityList.removeAll(this.chunkTileEntityMap.values());
++
++		for(int var1 = 0; var1 < this.entities.length; ++var1) {
++			this.worldObj.unloadEntities(this.entities[var1]);
++		}
++
++	}
++
+ 	public final void getEntitiesOfTypeWithinAAAB(Entity var1, AxisAlignedBB var2, List var3) {
+ 		int var4 = MathHelper.floor_double((var2.minY - 2.0D) / 16.0D);
+ 		int var5 = MathHelper.floor_double((var2.maxY + 2.0D) / 16.0D);
+@@ -382,7 +527,25 @@
+ 
+ 	}
+ 
+-	public final boolean needsSaving() {
+-		return this.neverSave ? false : this.isModified;
++	public final boolean needsSaving(boolean var1) {
++		if(this.neverSave) {
++			return false;
++		} else if(this.isModified) {
++			return true;
++		} else {
++			if(var1) {
++				if(this.hasEntities) {
++					return true;
++				}
++
++				for(int var2 = 0; var2 < this.entities.length; ++var2) {
++					if(this.entities[var2].size() > 0) {
++						return true;
++					}
++				}
++			}
++
++			return false;
++		}
+ 	}
+ }
+--- net/minecraft/game/world/chunk/ChunkProviderIso.java
++++ net/minecraft/game/world/chunk/ChunkProviderIso.java
+@@ -1,19 +1,20 @@
+ package net.minecraft.game.world.chunk;
+ 
+-import java.io.IOException;
++import com.mojang.nbt.NBTTagCompound;
++import java.io.File;
++import java.io.FileInputStream;
++import net.minecraft.client.LoadingScreenRenderer;
+ import net.minecraft.game.world.World;
+-import net.minecraft.game.world.chunk.loader.IChunkLoader;
+-import util.IProgressUpdate;
+ 
+ public final class ChunkProviderIso implements IChunkProvider {
+ 	private Chunk[] chunkMapping = new Chunk[256];
++	private File saveDirectory;
+ 	private World worldObj;
+-	private IChunkLoader chunkLoader;
+ 	private byte[] blankChunk = new byte[-Short.MIN_VALUE];
+ 
+-	public ChunkProviderIso(World var1, IChunkLoader var2) {
++	public ChunkProviderIso(World var1, File var2) {
+ 		this.worldObj = var1;
+-		this.chunkLoader = var2;
++		this.saveDirectory = var2;
+ 	}
+ 
+ 	public final boolean chunkExists(int var1, int var2) {
+@@ -43,20 +44,34 @@
+ 		}
+ 	}
+ 
+-	private synchronized Chunk loadChunk(int var1, int var2) {
+-		try {
+-			return this.chunkLoader.loadChunk(this.worldObj, var1, var2);
+-		} catch (IOException var3) {
+-			var3.printStackTrace();
+-			return null;
++	private Chunk loadChunk(int var1, int var2) {
++		int var3 = var2;
++		String var4 = "c." + Integer.toString(var1, 36) + "." + Integer.toString(var2, 36) + ".dat";
++		String var7 = Integer.toString(var1 & 63, 36);
++		String var10 = Integer.toString(var3 & 63, 36);
++		File var6 = new File(this.saveDirectory, var7);
++		var6.mkdirs();
++		var6 = new File(var6, var10);
++		var6.mkdirs();
++		var6 = new File(var6, var4);
++		var6 = var6;
++		if(var6.exists()) {
++			try {
++				FileInputStream var8 = new FileInputStream(var6);
++				NBTTagCompound var9 = LoadingScreenRenderer.read(var8);
++				return Chunk.readChunkNBTData(this.worldObj, var9.getCompoundTag("Level"));
++			} catch (Exception var5) {
++				var5.printStackTrace();
++			}
+ 		}
++
++		return null;
+ 	}
+ 
+ 	public final void populate(IChunkProvider var1, int var2, int var3) {
+ 	}
+ 
+-	public final boolean saveChunks(boolean var1, IProgressUpdate var2) {
+-		return true;
++	public final void saveChunks(boolean var1) {
+ 	}
+ 
+ 	public final boolean unload100OldestChunks() {
+--- net/minecraft/client/LoadingScreenRenderer.java
++++ net/minecraft/client/LoadingScreenRenderer.java
+@@ -1,5 +1,14 @@
+ package net.minecraft.client;
+ 
++import com.mojang.nbt.NBTBase;
++import com.mojang.nbt.NBTTagCompound;
++import java.io.DataInputStream;
++import java.io.DataOutputStream;
++import java.io.IOException;
++import java.io.InputStream;
++import java.io.OutputStream;
++import java.util.zip.GZIPInputStream;
++import java.util.zip.GZIPOutputStream;
+ import net.minecraft.client.gui.ScaledResolution;
+ import net.minecraft.client.render.Tessellator;
+ import org.lwjgl.opengl.Display;
+@@ -119,5 +128,37 @@
+ 				}
+ 			}
+ 		}
++	}
++
++	public LoadingScreenRenderer() {
++	}
++
++	public static NBTTagCompound read(InputStream var0) throws IOException {
++		DataInputStream var4 = new DataInputStream(new GZIPInputStream(var0));
++
++		NBTTagCompound var5;
++		try {
++			NBTBase var1 = NBTBase.readNamedTag(var4);
++			if(!(var1 instanceof NBTTagCompound)) {
++				throw new IOException("Root tag must be a named compound tag");
++			}
++
++			var5 = (NBTTagCompound)var1;
++		} finally {
++			var4.close();
++		}
++
++		return var5;
++	}
++
++	public static void write(NBTTagCompound var0, OutputStream var1) throws IOException {
++		DataOutputStream var5 = new DataOutputStream(new GZIPOutputStream(var1));
++
++		try {
++			NBTBase.writeNamedTag(var0, var5);
++		} finally {
++			var5.close();
++		}
++
+ 	}
+ }
+--- net/minecraft/game/world/chunk/loader/ChunkLoader.java
++++ net/minecraft/game/world/chunk/loader/ChunkLoader.java
+@@ -1,183 +1,1 @@
+ package net.minecraft.game.world.chunk.loader;
+-
+-import com.mojang.nbt.NBTTagCompound;
+-import com.mojang.nbt.NBTTagList;
+-import java.io.File;
+-import java.io.FileInputStream;
+-import java.io.FileOutputStream;
+-import java.util.Iterator;
+-import net.minecraft.client.UnexpectedThrowable;
+-import net.minecraft.game.entity.Entity;
+-import net.minecraft.game.entity.EntityList;
+-import net.minecraft.game.world.World;
+-import net.minecraft.game.world.block.tileentity.TileEntity;
+-import net.minecraft.game.world.chunk.Chunk;
+-import net.minecraft.game.world.chunk.NibbleArray;
+-
+-public final class ChunkLoader implements IChunkLoader {
+-	private File saveDir;
+-	private boolean createIfNecessary;
+-
+-	public ChunkLoader(File var1, boolean var2) {
+-		this.saveDir = var1;
+-		this.createIfNecessary = false;
+-	}
+-
+-	private File chunkFileForXZ(int var1, int var2) {
+-		String var3 = "c." + Integer.toString(var1, 36) + "." + Integer.toString(var2, 36) + ".dat";
+-		String var4 = Integer.toString(var1 & 63, 36);
+-		String var6 = Integer.toString(var2 & 63, 36);
+-		File var5 = new File(this.saveDir, var4);
+-		if(!var5.exists()) {
+-			if(!this.createIfNecessary) {
+-				return null;
+-			}
+-
+-			var5.mkdir();
+-		}
+-
+-		var5 = new File(var5, var6);
+-		if(!var5.exists()) {
+-			if(!this.createIfNecessary) {
+-				return null;
+-			}
+-
+-			var5.mkdir();
+-		}
+-
+-		var5 = new File(var5, var3);
+-		return !var5.exists() && !this.createIfNecessary ? null : var5;
+-	}
+-
+-	public final Chunk loadChunk(World var1, int var2, int var3) {
+-		File var5 = this.chunkFileForXZ(var2, var3);
+-		if(var5 != null && var5.exists()) {
+-			try {
+-				FileInputStream var6 = new FileInputStream(var5);
+-				NBTTagCompound var7 = UnexpectedThrowable.readCompressed(var6);
+-				return loadChunkIntoWorldFromCompound(var1, var7.getCompoundTag("Level"));
+-			} catch (Exception var4) {
+-				var4.printStackTrace();
+-			}
+-		}
+-
+-		return null;
+-	}
+-
+-	public final void saveChunk(World var1, Chunk var2) {
+-		File var3 = this.chunkFileForXZ(var2.xPosition, var2.zPosition);
+-		if(var3.exists()) {
+-			var1.sizeOnDisk -= var3.length();
+-		}
+-
+-		try {
+-			FileOutputStream var4 = new FileOutputStream(var3);
+-			NBTTagCompound var5 = new NBTTagCompound();
+-			NBTTagCompound var6 = new NBTTagCompound();
+-			var5.setTag("Level", var6);
+-			storeChunkInCompound(var2, var1, var6);
+-			UnexpectedThrowable.writeCompressed(var5, var4);
+-			var1.sizeOnDisk += var3.length();
+-		} catch (Exception var7) {
+-			var7.printStackTrace();
+-		}
+-	}
+-
+-	private static void storeChunkInCompound(Chunk var0, World var1, NBTTagCompound var2) {
+-		var2.setInteger("xPos", var0.xPosition);
+-		var2.setInteger("zPos", var0.zPosition);
+-		var2.setLong("LastUpdate", var1.worldTime);
+-		var2.setByteArray("Blocks", var0.blocks);
+-		var2.setByteArray("Data", var0.data.data);
+-		var2.setByteArray("SkyLight", var0.skylightMap.data);
+-		var2.setByteArray("BlockLight", var0.blocklightMap.data);
+-		var2.setByteArray("HeightMap", var0.heightMap);
+-		var2.setBoolean("TerrainPopulated", var0.isTerrainPopulated);
+-		NBTTagList var7 = new NBTTagList();
+-
+-		Iterator var4;
+-		NBTTagCompound var6;
+-		for(int var3 = 0; var3 < var0.entities.length; ++var3) {
+-			var4 = var0.entities[var3].iterator();
+-
+-			while(var4.hasNext()) {
+-				Entity var5 = (Entity)var4.next();
+-				var6 = new NBTTagCompound();
+-				if(var5.addEntityID(var6)) {
+-					var7.setTag(var6);
+-				}
+-			}
+-		}
+-
+-		var2.setTag("Entities", var7);
+-		NBTTagList var8 = new NBTTagList();
+-		var4 = var0.chunkTileEntityMap.values().iterator();
+-
+-		while(var4.hasNext()) {
+-			TileEntity var9 = (TileEntity)var4.next();
+-			var6 = new NBTTagCompound();
+-			var9.writeToNBT(var6);
+-			var8.setTag(var6);
+-		}
+-
+-		var2.setTag("TileEntities", var8);
+-	}
+-
+-	private static Chunk loadChunkIntoWorldFromCompound(World var0, NBTTagCompound var1) {
+-		int var2 = var1.getInteger("xPos");
+-		int var3 = var1.getInteger("zPos");
+-		Chunk var8 = new Chunk(var0, var2, var3);
+-		var8.blocks = var1.getByteArray("Blocks");
+-		var8.data = new NibbleArray(var1.getByteArray("Data"));
+-		var8.skylightMap = new NibbleArray(var1.getByteArray("SkyLight"));
+-		var8.blocklightMap = new NibbleArray(var1.getByteArray("BlockLight"));
+-		var8.heightMap = var1.getByteArray("HeightMap");
+-		var8.isTerrainPopulated = var1.getBoolean("TerrainPopulated");
+-		if(!var8.data.isValid()) {
+-			var8.data = new NibbleArray(var8.blocks.length);
+-		}
+-
+-		if(var8.heightMap == null || !var8.skylightMap.isValid()) {
+-			var8.heightMap = new byte[256];
+-			var8.skylightMap = new NibbleArray(var8.blocks.length);
+-			var8.generateHeightMap();
+-		}
+-
+-		if(!var8.blocklightMap.isValid()) {
+-			var8.blocklightMap = new NibbleArray(var8.blocks.length);
+-		}
+-
+-		NBTTagList var9 = var1.getTagList("Entities");
+-		if(var9 != null) {
+-			for(int var4 = 0; var4 < var9.tagCount(); ++var4) {
+-				NBTTagCompound var5 = (NBTTagCompound)var9.tagAt(var4);
+-				Entity var6 = EntityList.createEntityFromNBT(var5, var0);
+-				if(var6 != null) {
+-					var8.addEntity(var6);
+-				}
+-			}
+-		}
+-
+-		NBTTagList var10 = var1.getTagList("TileEntities");
+-		if(var10 != null) {
+-			for(int var11 = 0; var11 < var10.tagCount(); ++var11) {
+-				NBTTagCompound var12 = (NBTTagCompound)var10.tagAt(var11);
+-				TileEntity var7 = TileEntity.createAndLoadEntity(var12);
+-				if(var7 != null) {
+-					var8.addTileEntity(var7);
+-				}
+-			}
+-		}
+-
+-		return var8;
+-	}
+-
+-	public final void chunkTick() {
+-	}
+-
+-	public final void saveExtraData() {
+-	}
+-
+-	public final void saveExtraChunkData(World var1, Chunk var2) {
+-	}
+-}
+--- net/minecraft/game/world/chunk/loader/IsomChunkLoader.java
++++ net/minecraft/game/world/chunk/loader/IsomChunkLoader.java
+@@ -1,43 +1,1 @@
+ package net.minecraft.game.world.chunk.loader;
+-
+-import java.io.IOException;
+-import net.minecraft.game.world.World;
+-import net.minecraft.game.world.chunk.Chunk;
+-
+-public final class IsomChunkLoader implements IChunkLoader {
+-	private IChunkLoader chunkLoader;
+-	private IChunkLoader chunkLoader2;
+-
+-	public IsomChunkLoader(IChunkLoader var1, IChunkLoader var2) {
+-		this.chunkLoader = var1;
+-		this.chunkLoader2 = var2;
+-	}
+-
+-	public final void saveExtraData() {
+-		this.chunkLoader.saveExtraData();
+-	}
+-
+-	public final Chunk loadChunk(World var1, int var2, int var3) throws IOException {
+-		Chunk var4 = this.chunkLoader.loadChunk(var1, var2, var3);
+-		if(var4 == null) {
+-			var4 = this.chunkLoader2.loadChunk(var1, var2, var3);
+-			if(var4 != null) {
+-				var4.isModified = true;
+-			}
+-		}
+-
+-		return var4;
+-	}
+-
+-	public final void saveChunk(World var1, Chunk var2) throws IOException {
+-		this.chunkLoader.saveChunk(var1, var2);
+-	}
+-
+-	public final void chunkTick() {
+-		this.chunkLoader.chunkTick();
+-	}
+-
+-	public final void saveExtraChunkData(World var1, Chunk var2) throws IOException {
+-		this.chunkLoader.saveExtraChunkData(var1, var2);
+-	}
+-}
+--- net/minecraft/game/world/chunk/loader/IsomChunkProvider.java
++++ net/minecraft/game/world/chunk/loader/IsomChunkProvider.java
+@@ -1,216 +1,1 @@
+ package net.minecraft.game.world.chunk.loader;
+-
+-import com.mojang.nbt.NBTTagCompound;
+-import java.io.File;
+-import java.io.IOException;
+-import java.nio.ByteBuffer;
+-import java.nio.ByteOrder;
+-import java.util.ArrayList;
+-import java.util.HashMap;
+-import java.util.Iterator;
+-import java.util.List;
+-import java.util.Map;
+-import net.minecraft.game.entity.Entity;
+-import net.minecraft.game.entity.EntityList;
+-import net.minecraft.game.world.World;
+-import net.minecraft.game.world.block.tileentity.TileEntity;
+-import net.minecraft.game.world.chunk.Chunk;
+-import net.minecraft.game.world.chunk.NibbleArray;
+-
+-public final class IsomChunkProvider implements IChunkLoader {
+-	public static final ByteOrder bigEndian = ByteOrder.BIG_ENDIAN;
+-	private File saveFolder;
+-	private Map chunkMap = new HashMap();
+-	private long updateCounter = 0L;
+-
+-	public IsomChunkProvider(File var1) {
+-		var1 = new File(var1, "data");
+-		if(!var1.exists()) {
+-			var1.mkdir();
+-		}
+-
+-		this.saveFolder = var1;
+-	}
+-
+-	private static int getXZShifted(int var0, int var1) {
+-		int var2 = var0 >> 5;
+-		int var3 = var1 >> 5;
+-		var0 -= var2 << 5;
+-		var1 -= var3 << 5;
+-		var0 += var1 << 5;
+-		return var0;
+-	}
+-
+-	private IsomEntityLoader loadChunkZone(int var1, int var2, boolean var3) throws IOException {
+-		int var4 = getXZShifted(var1, var2);
+-		int var5 = var1 >> 5;
+-		int var6 = var2 >> 5;
+-		long var7 = (long)(var5 + (var6 << 20));
+-		if(!this.chunkMap.containsKey(Long.valueOf(var7))) {
+-			File var10 = new File(this.saveFolder, "zone_" + Integer.toString(var1, 36) + "_" + Integer.toString(var2, 36) + ".dat");
+-			if(!var10.exists()) {
+-				if(!var3) {
+-					return null;
+-				}
+-
+-				var10.createNewFile();
+-			}
+-
+-			File var9 = new File(this.saveFolder, "entities_" + Integer.toString(var1, 36) + "_" + Integer.toString(var2, 36) + ".dat");
+-			this.chunkMap.put(Long.valueOf(var7), new IsomEntityLoader(Long.valueOf(var7), var10, var9));
+-		}
+-
+-		IsomEntityLoader var11 = (IsomEntityLoader)this.chunkMap.get(Long.valueOf(var7));
+-		var11.time = this.updateCounter;
+-		return !var11.isValid(var4) && !var3 ? null : var11;
+-	}
+-
+-	private IsomLoadData loadChunkShifted(int var1, int var2, boolean var3) throws IOException {
+-		IsomEntityLoader var4 = this.loadChunkZone(var1, var2, var3);
+-		return var4 == null ? null : var4.loadFileDataBuffer(getXZShifted(var1, var2));
+-	}
+-
+-	public final Chunk loadChunk(World var1, int var2, int var3) throws IOException {
+-		IsomLoadData var4 = this.loadChunkShifted(var2, var3, false);
+-		if(var4 == null) {
+-			return null;
+-		} else {
+-			Chunk var11 = new Chunk(var1, var2, var3);
+-			var11.isModified = false;
+-			ByteBuffer var12 = var4.loadMagicNumber(256);
+-			var11.blocks = var4.loadMagicNumber(-Short.MIN_VALUE).array();
+-			var11.data = new NibbleArray(var4.loadMagicNumber(16384).array());
+-			var11.skylightMap = new NibbleArray(var4.loadMagicNumber(16384).array());
+-			var11.blocklightMap = new NibbleArray(var4.loadMagicNumber(16384).array());
+-			var11.heightMap = var4.loadMagicNumber(256).array();
+-			var12.flip();
+-			var12.getInt();
+-			var12.getInt();
+-			var12.getLong();
+-			long var7 = var12.getLong();
+-			var11.isTerrainPopulated = (var7 & 1L) != 0L;
+-			Chunk var14 = var11;
+-			World var13 = var1;
+-			int var5 = getXZShifted(var11.xPosition, var11.zPosition);
+-			IsomEntityLoader var9 = this.loadChunkZone(var11.xPosition, var11.zPosition, true);
+-			List var10 = var9.worldLoader.loadWorldSlot(var5);
+-
+-			for(var5 = 0; var5 < var10.size(); ++var5) {
+-				NBTTagCompound var6 = (NBTTagCompound)var10.get(var5);
+-				int var17 = var6.getInteger("_TYPE");
+-				if(var17 == 0) {
+-					Entity var15 = EntityList.createEntityFromNBT(var6, var13);
+-					if(var15 != null) {
+-						var14.addEntity(var15);
+-					}
+-				} else if(var17 == 1) {
+-					TileEntity var16 = TileEntity.createAndLoadEntity(var6);
+-					if(var16 != null) {
+-						var14.addTileEntity(var16);
+-					}
+-				}
+-			}
+-
+-			return var11;
+-		}
+-	}
+-
+-	public final void saveChunk(World var1, Chunk var2) throws IOException {
+-		long var3 = 0L;
+-		if(var2.isTerrainPopulated) {
+-			var3 = 1L;
+-		}
+-
+-		ByteBuffer var5 = ByteBuffer.allocate(256);
+-		var5.order(bigEndian);
+-		var5.putInt(var2.xPosition);
+-		var5.putInt(var2.zPosition);
+-		var5.putLong(var1.worldTime);
+-		var5.putLong(var3);
+-		var5.flip();
+-		IsomLoadData var6 = this.loadChunkShifted(var2.xPosition, var2.zPosition, true);
+-		var6.writeBufferPos(var5, 256);
+-		var6.setByteData(var2.blocks, -Short.MIN_VALUE);
+-		var6.setByteData(var2.data.data, 16384);
+-		var6.setByteData(var2.skylightMap.data, 16384);
+-		var6.setByteData(var2.blocklightMap.data, 16384);
+-		var6.setByteData(var2.heightMap, 256);
+-		var6.flushStream();
+-	}
+-
+-	public final void chunkTick() {
+-		++this.updateCounter;
+-		if(this.updateCounter % 200L == 4L) {
+-			ArrayList var1 = new ArrayList();
+-			Iterator var2 = this.chunkMap.values().iterator();
+-
+-			while(var2.hasNext()) {
+-				IsomEntityLoader var3 = (IsomEntityLoader)var2.next();
+-				if(this.updateCounter - var3.time > 1200L) {
+-					var1.add(var3.amount);
+-				}
+-			}
+-
+-			var2 = var1.iterator();
+-
+-			while(var2.hasNext()) {
+-				Long var5 = (Long)var2.next();
+-
+-				try {
+-					System.out.println("Closing zone " + var5);
+-					((IsomEntityLoader)this.chunkMap.get(var5)).closeWorld();
+-					this.chunkMap.remove(var5);
+-				} catch (IOException var4) {
+-					var4.printStackTrace();
+-				}
+-			}
+-		}
+-
+-	}
+-
+-	public final void saveExtraData() {
+-		Iterator var1 = this.chunkMap.values().iterator();
+-
+-		while(var1.hasNext()) {
+-			IsomEntityLoader var2 = (IsomEntityLoader)var1.next();
+-
+-			try {
+-				var2.closeWorld();
+-			} catch (IOException var3) {
+-				var3.printStackTrace();
+-			}
+-		}
+-
+-		this.chunkMap.clear();
+-	}
+-
+-	public final void saveExtraChunkData(World var1, Chunk var2) throws IOException {
+-		int var10 = getXZShifted(var2.xPosition, var2.zPosition);
+-		IsomEntityLoader var3 = this.loadChunkZone(var2.xPosition, var2.zPosition, true);
+-		ArrayList var4 = new ArrayList();
+-
+-		for(int var5 = 0; var5 < var2.entities.length; ++var5) {
+-			List var6 = var2.entities[var5];
+-
+-			for(int var7 = 0; var7 < var6.size(); ++var7) {
+-				Entity var8 = (Entity)var6.get(var7);
+-				NBTTagCompound var9 = new NBTTagCompound();
+-				var9.setInteger("_TYPE", 0);
+-				var8.addEntityID(var9);
+-				var4.add(var9);
+-			}
+-		}
+-
+-		Iterator var11 = var2.chunkTileEntityMap.values().iterator();
+-
+-		while(var11.hasNext()) {
+-			TileEntity var12 = (TileEntity)var11.next();
+-			NBTTagCompound var13 = new NBTTagCompound();
+-			var13.setInteger("_TYPE", 1);
+-			var12.writeToNBT(var13);
+-			var4.add(var13);
+-		}
+-
+-		var3.worldLoader.saveWorld(var10, var4);
+-	}
+-}
+--- net/minecraft/game/world/World.java
++++ net/minecraft/game/world/World.java
+@@ -22,8 +22,6 @@
+ import net.minecraft.game.world.chunk.ChunkProviderLoadOrGenerate;
+ import net.minecraft.game.world.chunk.IChunkProvider;
+ import net.minecraft.game.world.chunk.loader.ChunkLoader;
+-import net.minecraft.game.world.chunk.loader.IsomChunkLoader;
+-import net.minecraft.game.world.chunk.loader.IsomChunkProvider;
+ import net.minecraft.game.world.material.Material;
+ import net.minecraft.game.world.path.PathEntity;
+ import net.minecraft.game.world.path.Pathfinder;
+@@ -181,7 +179,7 @@
+ 	}
+ 
+ 	protected IChunkProvider getChunkProvider(File var1) {
+-		return new ChunkProviderLoadOrGenerate(this, new IsomChunkLoader(new IsomChunkProvider(var1), new ChunkLoader(var1, false)), new ChunkProviderGenerate(this, this.seed));
++		return new ChunkProviderLoadOrGenerate(this, var1, new ChunkProviderGenerate(this, this.seed));
+ 	}
+ 
+ 	private int getFirstUncoveredBlock(int var1, int var2) {
+@@ -229,7 +227,7 @@
+ 
+ 			var5 = new NBTTagCompound();
+ 			var5.setTag("Data", var4);
+-
++			
+ 			try {
+ 				UnexpectedThrowable.writeCompressed(var5, new FileOutputStream(var3));
+ 			} catch (Exception var6) {
+@@ -240,7 +238,7 @@
+ 				var2.displayLoadingString("Saving chunks");
+ 			}
+ 
+-			this.chunkProvider.saveChunks(var1, var2);
++			this.chunkProvider.saveChunks(var1);
+ 		}
+ 	}
+ 
+@@ -348,8 +346,7 @@
+ 				Chunk var6 = this.getChunkFromChunkCoords(var1 >> 4, var4 >> 4);
+ 				var2 &= 15;
+ 				var4 &= 15;
+-				var6.isModified = true;
+-				var6.data.setNibble(var2, var3, var4, var5);
++				var6.setBlockMetadata(var2, var3, var4, var5);
+ 				var10000 = true;
+ 			}
+ 		} else {
+@@ -538,15 +535,8 @@
+ 			if(!this.chunkExists(var5, var6)) {
+ 				return 0;
+ 			} else {
+-				Chunk var9 = this.getChunkFromChunkCoords(var5, var6);
+-				Chunk var10000 = var9;
+-				int var10002 = var2 & 15;
+-				var5 = var4 & 15;
+-				var4 = var3;
+-				var3 = var10002;
+-				EnumSkyBlock var8 = var1;
+-				Chunk var7 = var10000;
+-				return var8 == EnumSkyBlock.Sky ? var7.skylightMap.getNibble(var3, var4, var5) : (var8 == EnumSkyBlock.Block ? var7.blocklightMap.getNibble(var3, var4, var5) : 0);
++				Chunk var7 = this.getChunkFromChunkCoords(var5, var6);
++				return var7.getSavedLightValue(var1, var2 & 15, var3, var4 & 15);
+ 			}
+ 		} else {
+ 			return var1.defaultLightValue;
+@@ -1366,16 +1356,7 @@
+ 	public final void removeBlockTileEntity(int var1, int var2, int var3) {
+ 		Chunk var4 = this.getChunkFromChunkCoords(var1 >> 4, var3 >> 4);
+ 		if(var4 != null) {
+-			Chunk var10000 = var4;
+-			int var10001 = var1 & 15;
+-			int var6 = var3 & 15;
+-			var3 = var2;
+-			var2 = var10001;
+-			Chunk var5 = var10000;
+-			var2 = var2 + (var3 << 10) + (var6 << 10 << 10);
+-			if(var5.isChunkLoaded) {
+-				var5.worldObj.loadedTileEntityList.remove(var5.chunkTileEntityMap.remove(Integer.valueOf(var2)));
+-			}
++			var4.removeChunkBlockTileEntity(var1 & 15, var2, var3 & 15);
+ 		}
+ 
+ 	}
+@@ -1474,15 +1455,7 @@
+ 									World var18 = var3;
+ 									if(var4 >= -32000000 && var5 >= -32000000 && var4 < 32000000 && var5 <= 32000000 && var6 >= 0 && var6 < 128 && var3.chunkExists(var4 >> 4, var5 >> 4)) {
+ 										Chunk var22 = var3.getChunkFromChunkCoords(var4 >> 4, var5 >> 4);
+-										int var10002 = var4 & 15;
+-										int var16 = var5 & 15;
+-										var14 = var10002;
+-										var22.isModified = true;
+-										if(var19 == EnumSkyBlock.Sky) {
+-											var22.skylightMap.setNibble(var14, var6, var16, var8);
+-										} else if(var19 == EnumSkyBlock.Block) {
+-											var22.blocklightMap.setNibble(var14, var6, var16, var8);
+-										}
++										var22.setLightValue(var19, var4 & 15, var6, var5 & 15, var8);
+ 
+ 										for(var9 = 0; var9 < var18.worldAccesses.size(); ++var9) {
+ 											((IWorldAccess)var18.worldAccesses.get(var9)).markBlockNeedsUpdate(var10, var11, var12);
